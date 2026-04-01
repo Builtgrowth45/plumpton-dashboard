@@ -471,6 +471,42 @@
     </div>
   </div>
 
+  <!-- ── CONVERSION TIMELINE ── -->
+  <div class="section-label">conversion_timeline</div>
+  <div class="two-col">
+    <div class="data-card">
+      <div class="data-card-header">
+        <div class="data-card-title">&gt; daily_conversions</div>
+        <div class="badge">pixel events</div>
+      </div>
+      <div id="conversionTableWrap">
+        <div class="connect-prompt">
+          <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 20V10M18 20V4M6 20v-4"/></svg>
+          <strong>Connect Meta</strong>
+          Daily InitiateCheckout &amp; Purchase events
+        </div>
+      </div>
+    </div>
+    <div class="data-card">
+      <div class="data-card-header">
+        <div class="data-card-title">&gt; conversion_summary</div>
+        <div class="badge">rollup</div>
+      </div>
+      <div id="conversionSummaryWrap">
+        <div style="padding:16px;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <div class="pixel-item"><div class="pixel-icon warn">🛒</div><div><div class="pixel-name">Today</div><div class="pixel-count" id="icToday">—</div></div></div>
+            <div class="pixel-item"><div class="pixel-icon warn">💳</div><div><div class="pixel-name">Today</div><div class="pixel-count" id="purchaseToday">—</div></div></div>
+            <div class="pixel-item"><div class="pixel-icon warn">🛒</div><div><div class="pixel-name">Last 7 days</div><div class="pixel-count" id="ic7d">—</div></div></div>
+            <div class="pixel-item"><div class="pixel-icon warn">💳</div><div><div class="pixel-name">Last 7 days</div><div class="pixel-count" id="purchase7d">—</div></div></div>
+            <div class="pixel-item"><div class="pixel-icon warn">🛒</div><div><div class="pixel-name">Last 30 days</div><div class="pixel-count" id="ic30d">—</div></div></div>
+            <div class="pixel-item"><div class="pixel-icon warn">💳</div><div><div class="pixel-name">Last 30 days</div><div class="pixel-count" id="purchase30d">—</div></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- ── GA4 + GSC ── -->
   <div class="section-label">web &amp; organic_search</div>
   <div class="two-col">
@@ -682,6 +718,90 @@ async function loadPixelStats(since, until) {
       }
     } catch(e) {}
   }
+  // Load conversion timeline after pixel stats
+  await loadConversionTimeline();
+}
+
+// ── CONVERSION TIMELINE ──────────────────────────────────
+async function loadConversionTimeline() {
+  if (!state.metaToken) return;
+  try {
+    // Daily breakdown for last 14 days
+    const ins = await metaGet(`${CONFIG.META_AD_ACCOUNT}/insights`, {
+      fields: 'actions,action_values',
+      time_range: JSON.stringify({ since: dateOffset(30), until: dateOffset(0) }),
+      time_increment: 1,
+      level: 'account',
+      limit: 31
+    });
+    const days = ins.data || [];
+    renderConversionTable(days);
+    renderConversionSummary(days);
+  } catch(e) {
+    document.getElementById('conversionTableWrap').innerHTML =
+      `<div class="connect-prompt"><strong>Error</strong>${e.message}</div>`;
+  }
+}
+
+function getActionCount(actions, type) {
+  const a = (actions||[]).find(a => a.action_type === type);
+  return a ? +a.value : 0;
+}
+
+function renderConversionTable(days) {
+  if (!days.length) {
+    document.getElementById('conversionTableWrap').innerHTML =
+      '<div class="connect-prompt"><strong>No conversion data</strong></div>';
+    return;
+  }
+  // Show most recent 14 days, newest first
+  const recent = days.slice(-14).reverse();
+  const rows = recent.map(d => {
+    const date = d.date_start;
+    const ic = getActionCount(d.actions, 'offsite_conversion.fb_pixel_initiate_checkout');
+    const pu = getActionCount(d.actions, 'offsite_conversion.fb_pixel_purchase');
+    const pv = getActionCount(d.actions, 'offsite_conversion.fb_pixel_custom');
+    const dayName = new Date(date+'T12:00:00').toLocaleDateString('en-GB', { weekday:'short', day:'numeric', month:'short' });
+    return `<tr>
+      <td class="td-name">${dayName}</td>
+      <td>${ic || '<span class="td-dim">0</span>'}</td>
+      <td>${pu || '<span class="td-dim">0</span>'}</td>
+      <td>${fmtCurr(d.spend || 0)}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('conversionTableWrap').innerHTML = `<table class="data-table">
+    <thead><tr><th>Date</th><th>🛒 Checkouts</th><th>💳 Purchases</th><th>Spend</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+}
+
+function renderConversionSummary(days) {
+  if (!days.length) return;
+  const today = dateOffset(0);
+  const d7 = dateOffset(7);
+  const d30 = dateOffset(30);
+
+  let icToday=0, puToday=0, ic7=0, pu7=0, ic30=0, pu30=0;
+  days.forEach(d => {
+    const date = d.date_start;
+    const ic = getActionCount(d.actions, 'offsite_conversion.fb_pixel_initiate_checkout');
+    const pu = getActionCount(d.actions, 'offsite_conversion.fb_pixel_purchase');
+    if (date === today) { icToday = ic; puToday = pu; }
+    if (date >= d7)  { ic7 += ic; pu7 += pu; }
+    ic30 += ic; pu30 += pu;
+  });
+
+  const set = (id, val, icon) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val + (icon === 'ic' ? ' checkouts' : ' purchases');
+    const item = el?.closest('.pixel-item')?.querySelector('.pixel-icon');
+    if (item) item.className = 'pixel-icon ' + (val > 0 ? 'ok' : 'warn');
+  };
+  set('icToday', icToday, 'ic');
+  set('purchaseToday', puToday, 'pu');
+  set('ic7d', ic7, 'ic');
+  set('purchase7d', pu7, 'pu');
+  set('ic30d', ic30, 'ic');
+  set('purchase30d', pu30, 'pu');
 }
 
 function renderCampaigns(camps) {
